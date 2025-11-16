@@ -1,5 +1,4 @@
-// api/generate-uuid.js
-import { createHash } from 'crypto';
+// api/create-draft.js
 
 // دالة مساعدة لإضافة CORS headers (نفس الدالة المساعدة)
 const allowCors = fn => async (req, res) => {
@@ -14,25 +13,23 @@ const allowCors = fn => async (req, res) => {
     return await fn(req, res);
 };
 
-// --- كود EtaUuid المنقول (لا تغيير هنا) ---
-// ... (انسخ كل دوال EtaUuid كما هي من ردنا السابق) ...
-function sha256Hex(str) { /* ... */ }
-function isWS(c) { /* ... */ }
-// ... وهكذا ...
-function computeUuidFromRawText(raw) { /* ... */ }
-
 // الدالة الأساسية
-function handler(request, response) {
+async function handler(request, response) {
     if (request.method !== 'POST') {
         return response.status(405).json({ message: 'Method Not Allowed' });
     }
     try {
-        const { rawPayload } = request.body;
-        if (!rawPayload) {
-            return response.status(400).json({ error: 'rawPayload is required' });
+        const { payload, token } = request.body;
+        if (!payload || !token) {
+            return response.status(400).json({ error: 'Payload and token are required' });
         }
-        const uuid = computeUuidFromRawText(rawPayload);
-        return response.status(200).json({ success: true, uuid: uuid });
+        const etaResponse = await fetch("https://api-portal.invoicing.eta.gov.eg/api/v1/documents/drafts", {
+            method: 'POST',
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify(payload )
+        });
+        const responseData = await etaResponse.json();
+        return response.status(etaResponse.status).json(responseData);
     } catch (error) {
         return response.status(500).json({ success: false, error: error.message });
     }
