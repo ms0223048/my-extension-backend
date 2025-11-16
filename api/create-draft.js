@@ -1,36 +1,42 @@
-// هذا الكود يعمل على خادم Vercel (api/create-draft.js)
+// api/generate-uuid.js
+import { createHash } from 'crypto';
 
-export default async function handler(request, response) {
+// دالة مساعدة لإضافة CORS headers (نفس الدالة المساعدة)
+const allowCors = fn => async (req, res) => {
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+    return await fn(req, res);
+};
+
+// --- كود EtaUuid المنقول (لا تغيير هنا) ---
+// ... (انسخ كل دوال EtaUuid كما هي من ردنا السابق) ...
+function sha256Hex(str) { /* ... */ }
+function isWS(c) { /* ... */ }
+// ... وهكذا ...
+function computeUuidFromRawText(raw) { /* ... */ }
+
+// الدالة الأساسية
+function handler(request, response) {
     if (request.method !== 'POST') {
         return response.status(405).json({ message: 'Method Not Allowed' });
     }
-
     try {
-        // استقبال البيانات وتوكن الدخول من الإضافة
-        const { payload, token } = request.body;
-
-        if (!payload || !token) {
-            return response.status(400).json({ error: 'Payload and token are required' });
+        const { rawPayload } = request.body;
+        if (!rawPayload) {
+            return response.status(400).json({ error: 'rawPayload is required' });
         }
-
-        // إعادة إرسال الطلب إلى بوابة الضرائب من الخادم
-        const etaResponse = await fetch("https://api-portal.invoicing.eta.gov.eg/api/v1/documents/drafts", {
-            method: 'POST',
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}` // استخدام التوكن الممرر
-            },
-            body: JSON.stringify(payload )
-        });
-
-        // قراءة الرد من بوابة الضرائب
-        const responseData = await etaResponse.json();
-
-        // إرجاع الرد كما هو إلى الإضافة
-        // response.status() يأخذ كود الحالة من رد بوابة الضرائب
-        return response.status(etaResponse.status).json(responseData);
-
+        const uuid = computeUuidFromRawText(rawPayload);
+        return response.status(200).json({ success: true, uuid: uuid });
     } catch (error) {
         return response.status(500).json({ success: false, error: error.message });
     }
 }
+
+// تصدير الدالة بعد تغليفها
+export default allowCors(handler);
