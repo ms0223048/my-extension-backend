@@ -1,11 +1,34 @@
 // هذا الكود يعمل على خادم Vercel (api/generate-uuid.js)
 import { createHash } from 'crypto'; // استخدام مكتبة crypto المدمجة في Node.js
 
-// --- بداية كود EtaUuid المنقول (مع تعديل بسيط) ---
+// -----------------------------------------------------------------------------
+// 1. دالة مساعدة لإضافة CORS headers (هذا هو الجزء الذي يحل مشكلة OPTIONS)
+// -----------------------------------------------------------------------------
+const allowCors = fn => async (req, res) => {
+    // هذه الترويسات (Headers) تخبر المتصفح بأن الخادم يوافق على استقبال الطلبات
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*'); // السماح بالطلبات من أي مصدر
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); // السماح بطلبات POST و OPTIONS
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); // السماح بترويسة Content-Type
+
+    // إذا كان الطلب هو OPTIONS (الطلب الاستباقي)، نرسل رداً ناجحاً وننهي العملية
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+    // إذا لم يكن OPTIONS، نكمل تنفيذ الدالة الأصلية
+    return await fn(req, res);
+};
+
+
+// -----------------------------------------------------------------------------
+// 2. كود توليد الـ UUID (منقول بالكامل مع تعديل دالة التشفير)
+// -----------------------------------------------------------------------------
+
 // تم استبدال crypto.subtle.digest بـ createHash من Node.js لأنها أسرع على الخادم
 function sha256Hex(str) {
     const hash = createHash('sha256');
-    hash.update(str);
+    hash.update(str, 'utf8'); // تحديد الترميز لضمان التوافق
     return hash.digest('hex');
 }
 
@@ -24,14 +47,17 @@ Serializer.prototype.serializeArray = function(path, exclude, isExcluded, propNa
 function findFirstReceiptSlice(src) { const m = src.match(/"receipts"\s*:\s*\[/); if (!m) return src.trim(); let i = m.index + m[0].length; while (i < src.length && /\s/.test(src[i])) i++; if (src[i] !== '{') return src.trim(); let depth = 0, start = i; while (i < src.length) { const ch = src[i]; if (ch === '"') { i++; while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === '"') { i++; break; } i++; } continue; } if (ch === '{') { depth++; } if (ch === '}') { depth--; if (depth === 0) { i++; break; } } i++; } return src.slice(start, i); }
 function getCanonicalFromRawText(raw) { const slice = findFirstReceiptSlice(raw); const ser = new Serializer(slice); ser.serializeObject('', []); return ser.out.join(''); }
 function computeUuidFromRawText(raw) { const canonical = getCanonicalFromRawText(raw); return sha256Hex(canonical); }
-// --- نهاية كود EtaUuid المنقول ---
 
-export default function handler(request, response) {
-    if (request.method !== 'POST') {
-        return response.status(405).json({ message: 'Method Not Allowed' });
-    }
 
+// -----------------------------------------------------------------------------
+// 3. الدالة الأساسية التي تستقبل الطلبات
+// -----------------------------------------------------------------------------
+function handler(request, response) {
+    // هذه الدالة لا يتم استدعاؤها إلا إذا كان الطلب POST
+    // لأن دالة allowCors تعالج طلبات OPTIONS
+    
     try {
+        // استقبال النص الخام من جسم الطلب
         const { rawPayload } = request.body;
         if (!rawPayload) {
             return response.status(400).json({ error: 'rawPayload is required' });
@@ -40,10 +66,16 @@ export default function handler(request, response) {
         // استدعاء دالة توليد الـ UUID
         const uuid = computeUuidFromRawText(rawPayload);
 
-        // إرجاع الـ UUID الناتج
+        // إرجاع الـ UUID الناتج بنجاح
         return response.status(200).json({ success: true, uuid: uuid });
 
     } catch (error) {
+        // في حالة حدوث أي خطأ أثناء المعالجة
         return response.status(500).json({ success: false, error: error.message });
     }
 }
+
+// -----------------------------------------------------------------------------
+// 4. تصدير الدالة بعد تغليفها بمنطق CORS
+// -----------------------------------------------------------------------------
+export default allowCors(handler);
