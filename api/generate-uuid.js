@@ -1,38 +1,51 @@
 // المسار: /api/generate-uuid.js
 
 import { createHash } from 'crypto';
-import { verifySubscription } from './utils/subscription'; // <-- 1. استيراد دالة التحقق من الاشتراك
 
-// -----------------------------------------------------------------------------
-// 2. دالة مساعدة لإضافة CORS headers (ضرورية للتواصل مع الإضافة)
-// -----------------------------------------------------------------------------
+// --- 1. دالة التحقق من الاشتراك (مدمجة مباشرة هنا) ---
+async function verifySubscription(rin) {
+    if (!rin) return { isSubscribed: false, error: 'رقم التسجيل مطلوب للتحقق.' };
+
+    const BIN_ID = '6918dafcd0ea881f40eaa45b';
+    const ACCESS_KEY = '$2a$10$rXrBfSrwkJ60zqKQInt5.eVxCq14dTw9vQX8LXcpnWb7SJ5ZLNoKe';
+
+    try {
+        const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
+            headers: { 'X-Access-Key': ACCESS_KEY }
+        } );
+        if (!binResponse.ok) return { isSubscribed: false, error: 'فشل الاتصال بخادم الاشتراكات.' };
+
+        const data = await binResponse.json();
+        const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
+
+        if (!userSubscription) return { isSubscribed: false, error: 'أنت غير مشترك في هذه الخدمة.' };
+
+        if (new Date(userSubscription.expiry_date) >= new Date()) {
+            return { isSubscribed: true, error: null };
+        } else {
+            return { isSubscribed: false, error: 'لقد انتهى اشتراكك. يرجى التجديد.' };
+        }
+    } catch (error) {
+        return { isSubscribed: false, error: 'حدث خطأ فني أثناء التحقق من الاشتراك.' };
+    }
+}
+
+// --- 2. دالة CORS المساعدة ---
 const allowCors = fn => async (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*'); // السماح بالطلبات من أي مصدر
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    // معالجة الطلب الاستباقي (OPTIONS) الذي يرسله المتصفح
+    
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
-    // إكمال تنفيذ الدالة الأساسية
     return await fn(req, res);
 };
 
-// -----------------------------------------------------------------------------
-// 3. كود توليد الـ UUID (منقول بالكامل مع تعديل دالة التشفير لتناسب Node.js)
-// -----------------------------------------------------------------------------
-
-// استخدام دالة التشفير المدمجة في Node.js
-function sha256Hex(str) {
-    const hash = createHash('sha256');
-    hash.update(str, 'utf8');
-    return hash.digest('hex');
-}
-
-// دوال التحويل إلى الصيغة القياسية (Canonical Form)
+// --- 3. كود توليد الـ UUID (كما هو) ---
+function sha256Hex(str) { const hash = createHash('sha256'); hash.update(str, 'utf8'); return hash.digest('hex'); }
 function isWS(c) { return c === 0x20 || c === 0x0A || c === 0x0D || c === 0x09; }
 function Serializer(src) { this.s = src; this.n = src.length; this.i = 0; this.out = []; }
 Serializer.prototype.peek = function() { return this.i < this.n ? this.s.charCodeAt(this.i) : -1; }
@@ -49,56 +62,40 @@ function findFirstReceiptSlice(src) { const m = src.match(/"receipts"\s*:\s*\[/)
 function getCanonicalFromRawText(raw) { const slice = findFirstReceiptSlice(raw); const ser = new Serializer(slice); ser.serializeObject('', []); return ser.out.join(''); }
 function computeUuidFromRawText(raw) { const canonical = getCanonicalFromRawText(raw); return sha256Hex(canonical); }
 
-// -----------------------------------------------------------------------------
-// 4. الدالة الأساسية التي تستقبل الطلبات (مع إضافة منطق الحماية)
-// -----------------------------------------------------------------------------
+// --- 4. الدالة الأساسية (Handler) ---
 async function handler(request, response) {
     try {
-        // استقبال النص الخام من جسم الطلب
         const { rawPayload } = request.body;
         if (!rawPayload) {
             return response.status(400).json({ success: false, error: 'rawPayload is required' });
         }
 
-        // --- ✅✅✅ بداية منطقة الحماية ✅✅✅ ---
-
-        // 2. استخلاص رقم التسجيل الضريبي (rin) من البيانات الخام
+        // --- منطقة الحماية ---
         let rin;
         try {
-            // نحلل النص الخام إلى كائن JSON مؤقتًا فقط لاستخراج رقم التسجيل
             const parsedPayload = JSON.parse(rawPayload);
             rin = parsedPayload?.receipts?.[0]?.seller?.rin;
         } catch (e) {
             return response.status(400).json({ success: false, error: 'Invalid JSON payload' });
         }
 
-        // إذا لم نتمكن من العثور على رقم التسجيل
         if (!rin) {
             return response.status(400).json({ success: false, error: 'لا يمكن تحديد رقم التسجيل من بيانات الإيصال.' });
         }
 
-        // 3. التحقق من الاشتراك باستخدام الدالة المركزية
         const { isSubscribed, error: subscriptionError } = await verifySubscription(rin);
         if (!isSubscribed) {
-            // إذا لم يكن مشتركًا، نرفض الطلب فورًا برسالة واضحة
             return response.status(403).json({ success: false, error: `غير مصرح لك: ${subscriptionError}` });
         }
+        // --- نهاية منطقة الحماية ---
 
-        // --- ✅✅✅ نهاية منطقة الحماية ✅✅✅ ---
-
-        // 4. إذا كان مشتركًا، نكمل حساب الـ UUID
         const uuid = computeUuidFromRawText(rawPayload);
-
-        // إرجاع الـ UUID الناتج بنجاح
         return response.status(200).json({ success: true, uuid: uuid });
 
     } catch (error) {
-        // في حالة حدوث أي خطأ غير متوقع أثناء المعالجة
         return response.status(500).json({ success: false, error: error.message });
     }
 }
 
-// -----------------------------------------------------------------------------
-// 5. تصدير الدالة بعد تغليفها بمنطق CORS
-// -----------------------------------------------------------------------------
+// --- 5. تصدير الدالة النهائية ---
 export default allowCors(handler);
