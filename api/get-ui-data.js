@@ -1,20 +1,7 @@
-// ------------------------------------------------------------------
-// 🚀 الكود النهائي للخادم - نقطة الوصول الرئيسية
-// ------------------------------------------------------------------
-
-// استيراد قوالب الواجهات من ملف مساعد (سننشئه في الخطوة التالية)
-import { 
-    subscriptionModalHTML, 
-    invoicesUI_HTML, 
-    invoicesUI_JS, 
-    receiptsUI_HTML, 
-    receiptsUI_JS 
-} from '../utils/ui-templates';
-
-// دالة مساعدة لإضافة CORS headers (ضرورية للسماح للإضافة بالاتصال)
+// دالة مساعدة لإضافة CORS headers (ضرورية للسماح للإضافة بالاتصال بالخادم)
 const allowCors = fn => async (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', '*'); // اسمح بالوصول من أي مصدر
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     
@@ -25,8 +12,9 @@ const allowCors = fn => async (req, res) => {
     return await fn(req, res);
 };
 
-// الدالة الأساسية التي تحتوي على كل المنطق
+// الدالة الأساسية التي تحتوي على منطق التحقق
 async function handler(request, response) {
+    // تأكد من أن الطلب من نوع POST فقط
     if (request.method !== 'POST') {
         return response.status(405).json({ message: 'Only POST requests are allowed' });
     }
@@ -36,63 +24,38 @@ async function handler(request, response) {
     const ACCESS_KEY = '$2a$10$rXrBfSrwkJ60zqKQInt5.eVxCq14dTw9vQX8LXcpnWb7SJ5ZLNoKe';
 
     try {
+        // 1. اقرأ رقم التسجيل الضريبي (rin) من جسم الطلب
         const { rin } = request.body;
         if (!rin) {
-            return response.status(400).json({ error: 'RIN is required' });
+            // إذا لم يتم إرسال الرقم، أرجع "غير نشط"
+            return response.status(400).json({ status: 'inactive', message: 'RIN is required' });
         }
 
-        // 1. التحقق من حالة الاشتراك (باستخدام نفس منطقك الحالي)
+        // 2. اتصل بـ jsonbin.io لجلب بيانات الاشتراكات
         const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
             headers: { 'X-Access-Key': ACCESS_KEY }
         } );
 
-        let isSubscribed = false;
-        if (binResponse.ok) {
-            const data = await binResponse.json();
-            const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
-            if (userSubscription && new Date(userSubscription.expiry_date) >= new Date()) {
-                isSubscribed = true;
-            }
+        // إذا فشل الاتصال، افترض أن الاشتراك غير نشط كإجراء أمان
+        if (!binResponse.ok) {
+            return response.status(500).json({ status: 'inactive', message: 'Failed to fetch subscription data.' });
         }
 
-        // 2. بناء الرد الكامل بناءً على حالة الاشتراك
-        let responsePayload;
-        if (isSubscribed) {
-            // *** المستخدم مشترك: أرسل الأكواد الكاملة للواجهات ***
-            responsePayload = {
-                access: 'granted',
-                ui: {
-                    invoices: { html: invoicesUI_HTML, js: invoicesUI_JS },
-                    receipts: { html: receiptsUI_HTML, js: receiptsUI_JS }
-                }
-            };
+        const data = await binResponse.json();
+        const subscriptions = data.record?.subscriptions || [];
+        const userSubscription = subscriptions.find(sub => sub.rin === rin);
+
+        // 3. تحقق من وجود الاشتراك وصلاحيته
+        if (userSubscription && new Date(userSubscription.expiry_date) >= new Date()) {
+            // *** المستخدم مشترك: أرجع "active" ***
+            return response.status(200).json({ status: 'active' });
         } else {
-            // *** المستخدم غير مشترك: أرسل الواجهات مع شاشة القفل المدمجة ***
-            // دمج شاشة القفل مباشرة في هيكل الواجهات
-            const lockedInvoicesHTML = invoicesUI_HTML.replace(
-                '<div class="panel-content-wrapper">', 
-                `<div class="panel-content-wrapper"><div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(244, 247, 250, 0.95); z-index: 100;">${subscriptionModalHTML}</div>`
-            );
-            const lockedReceiptsHTML = receiptsUI_HTML.replace(
-                '<div class="panel-content-wrapper">', 
-                `<div class="panel-content-wrapper"><div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(244, 247, 250, 0.95); z-index: 100;">${subscriptionModalHTML}</div>`
-            );
-
-            responsePayload = {
-                access: 'denied',
-                ui: {
-                    invoices: { html: lockedInvoicesHTML, js: '' }, // لا نرسل أي JS وظيفي
-                    receipts: { html: lockedReceiptsHTML, js: '' }
-                }
-            };
+            // *** المستخدم غير مشترك أو الاشتراك منتهي: أرجع "inactive" ***
+            return response.status(200).json({ status: 'inactive', reason: 'Subscription not found or expired.' });
         }
-
-        // 3. إرسال الرد النهائي إلى الإضافة
-        return response.status(200).json(responsePayload);
-
     } catch (error) {
-        // في حالة حدوث أي خطأ، أرسل ردًا يفيد برفض الوصول كإجراء أمان
-        return response.status(500).json({ access: 'denied', error: error.message });
+        // في حالة حدوث أي خطأ، افترض أن الاشتراك غير نشط
+        return response.status(500).json({ status: 'inactive', message: error.message });
     }
 }
 
