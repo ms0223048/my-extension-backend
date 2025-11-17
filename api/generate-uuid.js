@@ -1,37 +1,38 @@
-// هذا الكود يعمل على خادم Vercel (api/generate-uuid.js)
-import { createHash } from 'crypto'; // استخدام مكتبة crypto المدمجة في Node.js
+// المسار: /api/generate-uuid.js
+
+import { createHash } from 'crypto';
+import { verifySubscription } from './utils/subscription'; // <-- 1. استيراد دالة التحقق من الاشتراك
 
 // -----------------------------------------------------------------------------
-// 1. دالة مساعدة لإضافة CORS headers (هذا هو الجزء الذي يحل مشكلة OPTIONS)
+// 2. دالة مساعدة لإضافة CORS headers (ضرورية للتواصل مع الإضافة)
 // -----------------------------------------------------------------------------
 const allowCors = fn => async (req, res) => {
-    // هذه الترويسات (Headers) تخبر المتصفح بأن الخادم يوافق على استقبال الطلبات
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); // السماح بالطلبات من أي مصدر
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); // السماح بطلبات POST و OPTIONS
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); // السماح بترويسة Content-Type
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    // إذا كان الطلب هو OPTIONS (الطلب الاستباقي)، نرسل رداً ناجحاً وننهي العملية
+    // معالجة الطلب الاستباقي (OPTIONS) الذي يرسله المتصفح
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
-    // إذا لم يكن OPTIONS، نكمل تنفيذ الدالة الأصلية
+    // إكمال تنفيذ الدالة الأساسية
     return await fn(req, res);
 };
 
-
 // -----------------------------------------------------------------------------
-// 2. كود توليد الـ UUID (منقول بالكامل مع تعديل دالة التشفير)
+// 3. كود توليد الـ UUID (منقول بالكامل مع تعديل دالة التشفير لتناسب Node.js)
 // -----------------------------------------------------------------------------
 
-// تم استبدال crypto.subtle.digest بـ createHash من Node.js لأنها أسرع على الخادم
+// استخدام دالة التشفير المدمجة في Node.js
 function sha256Hex(str) {
     const hash = createHash('sha256');
-    hash.update(str, 'utf8'); // تحديد الترميز لضمان التوافق
+    hash.update(str, 'utf8');
     return hash.digest('hex');
 }
 
+// دوال التحويل إلى الصيغة القياسية (Canonical Form)
 function isWS(c) { return c === 0x20 || c === 0x0A || c === 0x0D || c === 0x09; }
 function Serializer(src) { this.s = src; this.n = src.length; this.i = 0; this.out = []; }
 Serializer.prototype.peek = function() { return this.i < this.n ? this.s.charCodeAt(this.i) : -1; }
@@ -48,34 +49,56 @@ function findFirstReceiptSlice(src) { const m = src.match(/"receipts"\s*:\s*\[/)
 function getCanonicalFromRawText(raw) { const slice = findFirstReceiptSlice(raw); const ser = new Serializer(slice); ser.serializeObject('', []); return ser.out.join(''); }
 function computeUuidFromRawText(raw) { const canonical = getCanonicalFromRawText(raw); return sha256Hex(canonical); }
 
-
 // -----------------------------------------------------------------------------
-// 3. الدالة الأساسية التي تستقبل الطلبات
+// 4. الدالة الأساسية التي تستقبل الطلبات (مع إضافة منطق الحماية)
 // -----------------------------------------------------------------------------
-function handler(request, response) {
-    // هذه الدالة لا يتم استدعاؤها إلا إذا كان الطلب POST
-    // لأن دالة allowCors تعالج طلبات OPTIONS
-    
+async function handler(request, response) {
     try {
         // استقبال النص الخام من جسم الطلب
         const { rawPayload } = request.body;
         if (!rawPayload) {
-            return response.status(400).json({ error: 'rawPayload is required' });
+            return response.status(400).json({ success: false, error: 'rawPayload is required' });
         }
 
-        // استدعاء دالة توليد الـ UUID
+        // --- ✅✅✅ بداية منطقة الحماية ✅✅✅ ---
+
+        // 2. استخلاص رقم التسجيل الضريبي (rin) من البيانات الخام
+        let rin;
+        try {
+            // نحلل النص الخام إلى كائن JSON مؤقتًا فقط لاستخراج رقم التسجيل
+            const parsedPayload = JSON.parse(rawPayload);
+            rin = parsedPayload?.receipts?.[0]?.seller?.rin;
+        } catch (e) {
+            return response.status(400).json({ success: false, error: 'Invalid JSON payload' });
+        }
+
+        // إذا لم نتمكن من العثور على رقم التسجيل
+        if (!rin) {
+            return response.status(400).json({ success: false, error: 'لا يمكن تحديد رقم التسجيل من بيانات الإيصال.' });
+        }
+
+        // 3. التحقق من الاشتراك باستخدام الدالة المركزية
+        const { isSubscribed, error: subscriptionError } = await verifySubscription(rin);
+        if (!isSubscribed) {
+            // إذا لم يكن مشتركًا، نرفض الطلب فورًا برسالة واضحة
+            return response.status(403).json({ success: false, error: `غير مصرح لك: ${subscriptionError}` });
+        }
+
+        // --- ✅✅✅ نهاية منطقة الحماية ✅✅✅ ---
+
+        // 4. إذا كان مشتركًا، نكمل حساب الـ UUID
         const uuid = computeUuidFromRawText(rawPayload);
 
         // إرجاع الـ UUID الناتج بنجاح
         return response.status(200).json({ success: true, uuid: uuid });
 
     } catch (error) {
-        // في حالة حدوث أي خطأ أثناء المعالجة
+        // في حالة حدوث أي خطأ غير متوقع أثناء المعالجة
         return response.status(500).json({ success: false, error: error.message });
     }
 }
 
 // -----------------------------------------------------------------------------
-// 4. تصدير الدالة بعد تغليفها بمنطق CORS
+// 5. تصدير الدالة بعد تغليفها بمنطق CORS
 // -----------------------------------------------------------------------------
 export default allowCors(handler);
