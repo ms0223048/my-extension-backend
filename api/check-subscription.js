@@ -1,13 +1,3 @@
-// المسار: /api/check-subscription.js
-
-import crypto from "crypto";
-
-// دالة لإنشاء signature
-function generateSignature(rin, status, secretKey) {
-    return crypto.createHash("md5").update(rin + status + secretKey).digest("hex");
-}
-
-// CORS
 const allowCors = fn => async (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,12 +11,10 @@ const allowCors = fn => async (req, res) => {
     return await fn(req, res);
 };
 
-// 🔐 المفتاح السري الحقيقي — مهم جداً
-const SECRET_KEY = "SUPER_SECRET_KEY_2025_XA91"; // خليه صعب جداً ومحدش يعرفه
-
+// الدالة الأساسية التي تحتوي على منطق التحقق من الاشتراك
 async function handler(request, response) {
     if (request.method !== 'POST') {
-        return response.status(405).json({ message: 'Only POST allowed' });
+        return response.status(405).json({ message: 'Only POST requests are allowed' });
     }
 
     const BIN_ID = '6918dafcd0ea881f40eaa45b';
@@ -34,40 +22,34 @@ async function handler(request, response) {
 
     try {
         const { rin } = request.body;
-
         if (!rin) {
-            return response.status(400).json({ status: 'inactive', message: 'RIN required' });
+            return response.status(400).json({ status: 'inactive', message: 'RIN is required' });
         }
 
         const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
             headers: { 'X-Access-Key': ACCESS_KEY }
-        });
+        } );
 
         if (!binResponse.ok) {
             return response.status(500).json({ status: 'inactive', message: 'Failed to fetch subscription data.' });
         }
 
         const data = await binResponse.json();
-        const user = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
+        const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
 
-        let status = "inactive";
-
-        if (user && new Date(user.expiry_date) >= new Date()) {
-            status = "active";
+        if (!userSubscription) {
+            return response.status(200).json({ status: 'inactive', reason: 'User not found.' });
         }
 
-        // 🔥 إنشاء signature لا يمكن تزويرها
-        const signature = generateSignature(rin, status, SECRET_KEY);
-
-        return response.status(200).json({
-            rin,
-            status,
-            signature
-        });
-
+        if (new Date(userSubscription.expiry_date) >= new Date()) {
+            return response.status(200).json({ status: 'active' });
+        } else {
+            return response.status(200).json({ status: 'inactive', reason: 'Subscription expired.' });
+        }
     } catch (error) {
         return response.status(500).json({ status: 'inactive', message: error.message });
     }
 }
 
+// تصدير الدالة النهائية بعد تغليفها بمنطق CORS
 export default allowCors(handler);
