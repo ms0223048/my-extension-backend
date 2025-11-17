@@ -1,48 +1,56 @@
 // المسار: /api/create-draft.js
 
-import { verifySubscription } from './utils/subscription'; // <-- 1. استيراد دالة التحقق
+// --- 1. استيراد دالة التحقق من الاشتراك ---
+// تأكد من أن هذا المسار صحيح بناءً على هيكل مشروعك
+import { verifySubscription } from './utils/subscription'; 
 
-// دالة مساعدة لإضافة CORS headers (تبقى كما هي)
+// --- 2. دالة CORS المساعدة (النسخة المصححة) ---
 const allowCors = fn => async (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Origin', '*'); // للسماح بالطلبات من أي مصدر
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); // السماح بهذين النوعين من الطلبات
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); // السماح بهذه الترويسة
+
+    // --- ✅✅✅ الجزء الأهم لحل المشكلة ✅✅✅ ---
+    // إذا كان الطلب من نوع OPTIONS، نرسل رداً ناجحاً وننهي العملية فوراً.
+    // هذا يمنع الكود من الوصول إلى الجزء الذي يحاول قراءة `req.body`.
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
+    // --- ✅✅✅ نهاية الجزء المهم ✅✅✅ ---
+
+    // إذا لم يكن الطلب OPTIONS، نكمل تنفيذ الدالة الأساسية `handler`
     return await fn(req, res);
 };
 
+// --- 3. الدالة الأساسية (Handler) التي تحتوي على منطق العمل ---
 async function handler(request, response) {
+    // هذا الكود لن يتم تنفيذه إلا إذا كان الطلب POST
     if (request.method !== 'POST') {
         return response.status(405).json({ message: 'Method Not Allowed' });
     }
+
     try {
+        // الآن يمكننا قراءة `request.body` بأمان لأننا نعلم أن الطلب هو POST
         const { payload, token } = request.body;
         if (!payload || !token) {
-            return response.status(400).json({ error: 'Payload and token are required' });
+            return response.status(400).json({ error: { message: 'Payload and token are required' } });
         }
 
-        // --- ✅✅✅ بداية منطقة الحماية ✅✅✅ ---
-
-        // 2. استخلاص رقم التسجيل من بيانات الفاتورة
+        // --- منطقة الحماية (كما هي) ---
         const rin = payload?.document?.issuer?.id;
         if (!rin) {
             return response.status(400).json({ error: { message: 'بيانات الفاتورة غير مكتملة (رقم التسجيل مفقود).' } });
         }
 
-        // 3. التحقق من الاشتراك قبل أي إجراء آخر
         const { isSubscribed, error: subscriptionError } = await verifySubscription(rin);
         if (!isSubscribed) {
-            // إذا لم يكن مشتركًا، نرفض الطلب فورًا برسالة واضحة
             return response.status(403).json({ error: { message: `غير مصرح لك: ${subscriptionError}` } });
         }
+        // --- نهاية منطقة الحماية ---
 
-        // --- ✅✅✅ نهاية منطقة الحماية ✅✅✅ ---
-
-        // 4. إذا كان مشتركًا، نكمل الطلب إلى مصلحة الضرائب
+        // إرسال الطلب إلى مصلحة الضرائب
         const etaResponse = await fetch("https://api-portal.invoicing.eta.gov.eg/api/v1/documents/drafts", {
             method: 'POST',
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
@@ -50,7 +58,6 @@ async function handler(request, response) {
         });
 
         const responseData = await etaResponse.json();
-        // إرجاع الرد من مصلحة الضرائب كما هو
         return response.status(etaResponse.status).json(responseData);
 
     } catch (error) {
@@ -58,4 +65,5 @@ async function handler(request, response) {
     }
 }
 
+// --- 4. تصدير الدالة النهائية بعد تغليفها بمنطق CORS ---
 export default allowCors(handler);
