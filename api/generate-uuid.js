@@ -2,29 +2,19 @@
 
 import { createHash } from 'crypto';
 
-// --- 1. دالة التحقق من الاشتراك (مدمجة مباشرة هنا) ---
+// --- 1. دالة التحقق من الاشتراك (مدمجة مباشرة) ---
 async function verifySubscription(rin) {
     if (!rin) return { isSubscribed: false, error: 'رقم التسجيل مطلوب للتحقق.' };
-
     const BIN_ID = '6918dafcd0ea881f40eaa45b';
     const ACCESS_KEY = '$2a$10$rXrBfSrwkJ60zqKQInt5.eVxCq14dTw9vQX8LXcpnWb7SJ5ZLNoKe';
-
     try {
-        const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
-            headers: { 'X-Access-Key': ACCESS_KEY }
-        } );
+        const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, { headers: { 'X-Access-Key': ACCESS_KEY } } );
         if (!binResponse.ok) return { isSubscribed: false, error: 'فشل الاتصال بخادم الاشتراكات.' };
-
         const data = await binResponse.json();
         const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
-
         if (!userSubscription) return { isSubscribed: false, error: 'أنت غير مشترك في هذه الخدمة.' };
-
-        if (new Date(userSubscription.expiry_date) >= new Date()) {
-            return { isSubscribed: true, error: null };
-        } else {
-            return { isSubscribed: false, error: 'لقد انتهى اشتراكك. يرجى التجديد.' };
-        }
+        if (new Date(userSubscription.expiry_date) >= new Date()) return { isSubscribed: true, error: null };
+        return { isSubscribed: false, error: 'لقد انتهى اشتراكك. يرجى التجديد.' };
     } catch (error) {
         return { isSubscribed: false, error: 'حدث خطأ فني أثناء التحقق من الاشتراك.' };
     }
@@ -36,7 +26,6 @@ const allowCors = fn => async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
@@ -44,7 +33,7 @@ const allowCors = fn => async (req, res) => {
     return await fn(req, res);
 };
 
-// --- 3. كود توليد الـ UUID (كما هو) ---
+// --- 3. كود توليد الـ UUID (منقول بالكامل) ---
 function sha256Hex(str) { const hash = createHash('sha256'); hash.update(str, 'utf8'); return hash.digest('hex'); }
 function isWS(c) { return c === 0x20 || c === 0x0A || c === 0x0D || c === 0x09; }
 function Serializer(src) { this.s = src; this.n = src.length; this.i = 0; this.out = []; }
@@ -78,7 +67,6 @@ async function handler(request, response) {
         } catch (e) {
             return response.status(400).json({ success: false, error: 'Invalid JSON payload' });
         }
-
         if (!rin) {
             return response.status(400).json({ success: false, error: 'لا يمكن تحديد رقم التسجيل من بيانات الإيصال.' });
         }
