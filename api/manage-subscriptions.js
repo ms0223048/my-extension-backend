@@ -1,13 +1,10 @@
-// الملف: /api/manage-subscriptions.js
-
-const allowCors = (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-};
+// الملف: /api/manage-subscriptions.js (النسخة المطورة)
 
 module.exports = async (request, response) => {
-    allowCors(request, response);
+    // دالة CORS
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (request.method === 'OPTIONS') {
         return response.status(200).end();
@@ -16,7 +13,6 @@ module.exports = async (request, response) => {
         return response.status(405).json({ error: 'Only POST is allowed' });
     }
 
-    // --- الإعدادات ---
     const BIN_ID = '6918dafcd0ea881f40eaa45b';
     const ACCESS_KEY = '$2a$10$rXrBfSrwkJ60zqKQInt5.eVxCq14dTw9vQX8LXcpnWb7SJ5ZLNoKe';
     const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
@@ -24,12 +20,10 @@ module.exports = async (request, response) => {
     try {
         const { password, action, subscription, rin } = request.body;
 
-        // 1. التحقق من كلمة المرور
         if (password !== ADMIN_PASSWORD) {
             return response.status(403).json({ error: 'كلمة المرور غير صحيحة.' });
         }
 
-        // 2. جلب البيانات الحالية من jsonbin.io
         const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
             headers: { 'X-Access-Key': ACCESS_KEY }
         } );
@@ -37,15 +31,16 @@ module.exports = async (request, response) => {
         const currentData = await binResponse.json();
         let subscriptions = currentData.record?.subscriptions || [];
 
-        // 3. تنفيذ الإجراء المطلوب
         if (action === 'GET') {
-            // لا نفعل شيئاً، فقط سنعيد البيانات في النهاية
+            // لا تغيير
         } else if (action === 'UPDATE') {
-            const index = subscriptions.findIndex(sub => sub.rin === subscription.rin);
+            const { rin, username, expiry_date, notes } = subscription; // ✅ قراءة الحقول الجديدة
+            const index = subscriptions.findIndex(sub => sub.rin === rin);
+            const newSubData = { rin, username, expiry_date, notes }; // ✅ بناء الكائن الجديد
             if (index > -1) {
-                subscriptions[index] = subscription; // تحديث
+                subscriptions[index] = newSubData;
             } else {
-                subscriptions.push(subscription); // إضافة
+                subscriptions.push(newSubData);
             }
         } else if (action === 'DELETE') {
             subscriptions = subscriptions.filter(sub => sub.rin !== rin);
@@ -53,20 +48,22 @@ module.exports = async (request, response) => {
             throw new Error('Invalid action specified.');
         }
 
-        // 4. حفظ البيانات المحدثة مرة أخرى في jsonbin.io
         if (action === 'UPDATE' || action === 'DELETE') {
             const updateResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Access-Key': ACCESS_KEY
+                    'X-Access-Key': ACCESS_KEY,
+                    'X-Bin-Versioning': 'false' // ✅ منع إنشاء نسخ جديدة لكل تعديل
                 },
                 body: JSON.stringify({ subscriptions: subscriptions } )
             });
-            if (!updateResponse.ok) throw new Error('Failed to save updated data to bin.');
+            if (!updateResponse.ok) {
+                 const errorBody = await updateResponse.json();
+                 throw new Error(`Failed to save data: ${errorBody.message}`);
+            }
         }
 
-        // 5. إرسال رد ناجح مع البيانات المحدثة
         return response.status(200).json({ success: true, data: { subscriptions } });
 
     } catch (error) {
