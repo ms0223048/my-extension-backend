@@ -1,49 +1,40 @@
 // الملف: /api/check-subscription.js
 
-// لا حاجة لاستيراد أي مكتبات خارجية مثل jwt
+// لا يوجد أي import أو require لمكتبات خارجية
 
-// دالة CORS تبقى كما هي
-const allowCors = fn => async (req, res) => {
-    res.setHeader('Access-Control-Allow-Credentials', true);
+// دالة CORS مستقلة
+const allowCors = (req, res) => {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); // ✅ إضافة Authorization هنا
-    
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-    return await fn(req, res);
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 };
 
-// --- دوال مساعدة للتشفير (بديل JWT) ---
-
-// دالة لتحويل النص إلى صيغة Base64Url
+// دوال مساعدة للتشفير (بديل JWT)
 function base64url(source) {
     let base64 = Buffer.from(source).toString('base64');
-    base64 = base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-    return base64;
+    return base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
-// ✅ دالة إنشاء التوكن الجديدة
 async function createToken(payload, secret) {
     const header = { alg: 'HS256', typ: 'JWT' };
     const encodedHeader = base64url(JSON.stringify(header));
     const encodedPayload = base64url(JSON.stringify(payload));
-
     const data = `${encodedHeader}.${encodedPayload}`;
-    
-    // استخدام Crypto API المدمجة
-    const crypto = require('crypto');
+    const crypto = require('crypto'); // استخدام المكتبة المدمجة
     const signature = crypto.createHmac('sha256', secret).update(data).digest('base64url');
-
     return `${data}.${signature}`;
 }
 
-// --- الدالة الأساسية ---
-async function handler(request, response) {
+// الدالة الرئيسية
+module.exports = async (request, response) => {
+    allowCors(request, response);
+
+    if (request.method === 'OPTIONS') {
+        return response.status(200).end();
+    }
     if (request.method !== 'POST') {
-        return response.status(405).json({ success: false, error: 'Only POST requests are allowed' });
+        return response.status(405).json({ success: false, error: 'Only POST is allowed' });
     }
 
     const BIN_ID = '6918dafcd0ea881f40eaa45b';
@@ -76,15 +67,13 @@ async function handler(request, response) {
             return response.status(403).json({ success: false, error: `Access denied. ${reason}` });
         }
 
-        // إضافة تاريخ الإنشاء وانتهاء الصلاحية للتوكن
         const now = Math.floor(Date.now() / 1000);
         const payload = {
             rin: userSubscription.rin,
-            iat: now, // Issued at
-            exp: now + (24 * 60 * 60) // Expires in 24 hours
+            iat: now,
+            exp: now + (24 * 60 * 60)
         };
 
-        // استخدام دالة إنشاء التوكن الجديدة
         const sessionToken = await createToken(payload, JWT_SECRET);
 
         return response.status(200).json({
@@ -95,7 +84,4 @@ async function handler(request, response) {
     } catch (error) {
         return response.status(500).json({ success: false, error: error.message });
     }
-}
-
-// تصدير الدالة النهائية
-export default allowCors(handler);
+};
