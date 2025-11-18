@@ -1,9 +1,31 @@
 // الملف: /api/get-initial-data.js
 
-// استخدام require لضمان أقصى توافقية
-const jwt = require('jsonwebtoken');
+// دوال مساعدة للتحقق من التوكن
+function parseToken(token) {
+    try {
+        const [encodedHeader, encodedPayload, signature] = token.split('.');
+        const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+        return { encodedHeader, encodedPayload, signature, payload };
+    } catch (e) {
+        throw new Error('Invalid token format');
+    }
+}
 
-// دالة CORS مستقلة
+async function verifyToken(token, secret) {
+    const { encodedHeader, encodedPayload, signature, payload } = parseToken(token);
+    const data = `${encodedHeader}.${encodedPayload}`;
+    const crypto = require('crypto');
+    const expectedSignature = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+
+    if (expectedSignature !== signature) {
+        throw new Error('Invalid signature');
+    }
+    if (payload.exp && Date.now() >= payload.exp * 1000) {
+        throw new Error('Token expired');
+    }
+    return payload;
+}
+
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11,17 +33,13 @@ const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 };
 
-// دمج كل شيء في دالة التصدير الافتراضية
+// الدالة الرئيسية
 module.exports = async (request, response) => {
-    // تطبيق CORS أولاً
     allowCors(request, response);
 
-    // التعامل مع OPTIONS بشكل صريح في البداية
     if (request.method === 'OPTIONS') {
         return response.status(200).end();
     }
-
-    // التأكد من أن الطلب POST
     if (request.method !== 'POST') {
         return response.status(405).json({ success: false, error: 'Only POST is allowed' });
     }
@@ -32,18 +50,15 @@ module.exports = async (request, response) => {
     }
 
     try {
-        // استخراج التوكن من الـ Headers
         const authHeader = request.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             throw new Error('Missing or invalid authorization header');
         }
         const sessionToken = authHeader.split(' ')[1];
 
-        // التحقق من صحة التوكن
-        const decoded = jwt.verify(sessionToken, JWT_SECRET);
+        const decoded = await verifyToken(sessionToken, JWT_SECRET);
         const rin = decoded.rin;
 
-        // جلب بيانات الممول
         const { etaToken } = request.body;
         if (!etaToken) {
             throw new Error('ETA token is required');
@@ -53,22 +68,16 @@ module.exports = async (request, response) => {
             headers: { "Authorization": `Bearer ${etaToken}` }
         } );
         if (!taxpayerResponse.ok) {
-            const errorText = await taxpayerResponse.text();
-            console.error("ETA API Error:", errorText);
             throw new Error('Failed to fetch taxpayer data from ETA.');
         }
         const taxpayerData = await taxpayerResponse.json();
 
-        // إرسال البيانات بنجاح
         return response.status(200).json({
             success: true,
-            data: {
-                seller: taxpayerData
-            }
+            data: { seller: taxpayerData }
         });
 
     } catch (error) {
-        // إرجاع خطأ المصادقة إذا فشل التحقق من التوكن أو أي خطأ آخر
         return response.status(403).json({ success: false, error: `Authentication Failed: ${error.message}` });
     }
 };
