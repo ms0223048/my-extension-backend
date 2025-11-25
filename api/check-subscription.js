@@ -1,8 +1,5 @@
 // الملف: /api/check-subscription.js
 
-// لا يوجد أي import أو require لمكتبات خارجية
-
-// دالة CORS مستقلة
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -10,7 +7,6 @@ const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 };
 
-// دوال مساعدة للتشفير (بديل JWT)
 function base64url(source) {
     let base64 = Buffer.from(source).toString('base64');
     return base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -21,12 +17,11 @@ async function createToken(payload, secret) {
     const encodedHeader = base64url(JSON.stringify(header));
     const encodedPayload = base64url(JSON.stringify(payload));
     const data = `${encodedHeader}.${encodedPayload}`;
-    const crypto = require('crypto'); // استخدام المكتبة المدمجة
+    const crypto = require('crypto');
     const signature = crypto.createHmac('sha256', secret).update(data).digest('base64url');
     return `${data}.${signature}`;
 }
 
-// الدالة الرئيسية
 module.exports = async (request, response) => {
     allowCors(request, response);
 
@@ -42,7 +37,7 @@ module.exports = async (request, response) => {
     const JWT_SECRET = process.env.JWT_SECRET;
 
     if (!JWT_SECRET) {
-        return response.status(500).json({ success: false, error: 'Server configuration error.' });
+        return response.status(500).json({ success: false, error: 'Server configuration error: JWT_SECRET is not set.' });
     }
 
     try {
@@ -71,7 +66,7 @@ module.exports = async (request, response) => {
         const payload = {
             rin: userSubscription.rin,
             iat: now,
-            exp: now + (24 * 60 * 60)
+            exp: now + (24 * 60 * 60) // صلاحية 24 ساعة
         };
 
         const sessionToken = await createToken(payload, JWT_SECRET);
