@@ -1,4 +1,4 @@
-// الملف: /api/check-subscription.js (نسخة التشخيص النهائية)
+// الملف: /api/check-subscription.js (النسخة النهائية الكاملة)
 
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -26,6 +26,11 @@ module.exports = async (request, response) => {
     console.log("\n--- [check-subscription] Received a new request ---");
     allowCors(request, response);
 
+    // ✅ ترويسات منع التخزين المؤقت
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+
     if (request.method === 'OPTIONS') {
         return response.status(200).end();
     }
@@ -38,15 +43,15 @@ module.exports = async (request, response) => {
     const JWT_SECRET = process.env.JWT_SECRET;
 
     if (!JWT_SECRET) {
-        console.error("[check-subscription] FATAL ERROR: JWT_SECRET is not set in environment variables.");
+        console.error("[check-subscription] FATAL ERROR: JWT_SECRET is not set.");
         return response.status(500).json({ success: false, error: 'Server configuration error.' });
     }
 
     try {
         const { rin } = request.body;
-        console.log(`[check-subscription] RIN received from client: ${rin}`);
+        console.log(`[check-subscription] RIN received: ${rin}`);
         if (!rin) {
-            console.log("[check-subscription] Error: RIN is missing in the request body.");
+            console.log("[check-subscription] Error: RIN is missing.");
             return response.status(400).json({ success: false, error: 'RIN is required' });
         }
 
@@ -69,7 +74,7 @@ module.exports = async (request, response) => {
             return response.status(403).json({ success: false, error: `Access denied. ${reason}` });
         }
 
-        console.log(`[check-subscription] User ${rin} is valid. Creating a new session token.`);
+        console.log(`[check-subscription] User ${rin} is valid. Creating token.`);
         const now = Math.floor(Date.now() / 1000);
         const payload = {
             rin: userSubscription.rin,
