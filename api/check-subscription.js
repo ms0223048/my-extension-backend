@@ -1,4 +1,4 @@
-// الملف: /api/check-subscription.js
+// الملف: /api/check-subscription.js (نسخة التشخيص النهائية)
 
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -23,6 +23,7 @@ async function createToken(payload, secret) {
 }
 
 module.exports = async (request, response) => {
+    console.log("\n--- [check-subscription] Received a new request ---");
     allowCors(request, response);
 
     if (request.method === 'OPTIONS') {
@@ -37,20 +38,25 @@ module.exports = async (request, response) => {
     const JWT_SECRET = process.env.JWT_SECRET;
 
     if (!JWT_SECRET) {
-        return response.status(500).json({ success: false, error: 'Server configuration error: JWT_SECRET is not set.' });
+        console.error("[check-subscription] FATAL ERROR: JWT_SECRET is not set in environment variables.");
+        return response.status(500).json({ success: false, error: 'Server configuration error.' });
     }
 
     try {
         const { rin } = request.body;
+        console.log(`[check-subscription] RIN received from client: ${rin}`);
         if (!rin) {
+            console.log("[check-subscription] Error: RIN is missing in the request body.");
             return response.status(400).json({ success: false, error: 'RIN is required' });
         }
 
         const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
             headers: { 'X-Access-Key': ACCESS_KEY }
         } );
+        console.log(`[check-subscription] Fetched from jsonbin, status: ${binResponse.status}`);
 
         if (!binResponse.ok) {
+            console.log("[check-subscription] Error: Failed to fetch from jsonbin.");
             return response.status(500).json({ success: false, error: 'Failed to fetch subscription data.' });
         }
 
@@ -58,10 +64,12 @@ module.exports = async (request, response) => {
         const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
 
         if (!userSubscription || new Date(userSubscription.expiry_date) < new Date()) {
-            const reason = !userSubscription ? 'User not found.' : 'Subscription expired.';
+            const reason = !userSubscription ? 'User not found in bin.' : 'Subscription expired.';
+            console.log(`[check-subscription] Access Denied for RIN ${rin}. Reason: ${reason}`);
             return response.status(403).json({ success: false, error: `Access denied. ${reason}` });
         }
 
+        console.log(`[check-subscription] User ${rin} is valid. Creating a new session token.`);
         const now = Math.floor(Date.now() / 1000);
         const payload = {
             rin: userSubscription.rin,
@@ -71,12 +79,14 @@ module.exports = async (request, response) => {
 
         const sessionToken = await createToken(payload, JWT_SECRET);
 
+        console.log("[check-subscription] Token created successfully. Sending to client.");
         return response.status(200).json({
             success: true,
             session_token: sessionToken
         });
 
     } catch (error) {
+        console.error("[check-subscription] CATCH BLOCK ERROR:", error);
         return response.status(500).json({ success: false, error: error.message });
     }
 };
