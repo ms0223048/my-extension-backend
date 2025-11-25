@@ -1,4 +1,4 @@
-// الملف: /api/validate-token.js (النسخة النهائية والمصححة)
+// الملف: /api/validate-token.js (نسخة التشخيص النهائية)
 
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -28,6 +28,7 @@ async function verifyToken(token, secret) {
 }
 
 module.exports = async (request, response) => {
+    console.log("\n--- [validate-token] Received a new request ---");
     allowCors(request, response);
 
     if (request.method === 'OPTIONS') {
@@ -42,12 +43,14 @@ module.exports = async (request, response) => {
     const JWT_SECRET = process.env.JWT_SECRET;
 
     if (!JWT_SECRET) {
+        console.error("[validate-token] FATAL ERROR: JWT_SECRET is not set in environment variables.");
         return response.status(500).json({ success: false, error: 'Server configuration error.' });
     }
 
     try {
         const authHeader = request.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            console.log("[validate-token] Error: Authorization header missing or invalid.");
             return response.status(401).json({ success: false, error: 'Authorization header missing.' });
         }
         const token = authHeader.split(' ')[1];
@@ -55,25 +58,29 @@ module.exports = async (request, response) => {
         // 1. التحقق من صحة التوكن (التوقيع وتاريخ الانتهاء)
         const payload = await verifyToken(token, JWT_SECRET);
         const rin = payload.rin;
+        console.log(`[validate-token] Token is technically valid for RIN: ${rin}`);
 
-        // ✅✅✅ 2. الخطوة الحاسمة: التحقق من الاشتراك في قاعدة البيانات في كل مرة ✅✅✅
+        // 2. التحقق من الاشتراك في قاعدة البيانات في كل مرة
         const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
             headers: { 'X-Access-Key': ACCESS_KEY }
         } );
+        console.log(`[validate-token] Fetched from jsonbin, status: ${binResponse.status}`);
 
         if (!binResponse.ok) {
+            console.log("[validate-token] Error: Failed to fetch from jsonbin during validation.");
             return response.status(500).json({ success: false, error: 'Failed to fetch subscription data during validation.' });
         }
 
         const data = await binResponse.json();
         const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
 
-        // إذا تم حذف المستخدم أو انتهى اشتراكه من قاعدة البيانات، سيتم رفض التوكن هنا
         if (!userSubscription || new Date(userSubscription.expiry_date) < new Date()) {
+            console.log(`[validate-token] Access Denied: Subscription for ${rin} is no longer valid in bin.`);
             return response.status(401).json({ success: false, error: 'Subscription is no longer valid.' });
         }
         
         // 3. إذا كان كل شيء سليمًا، نرجع بيانات النجاح
+        console.log(`[validate-token] Subscription for ${rin} is still valid. Granting access.`);
         return response.status(200).json({
             success: true,
             data: {
@@ -83,7 +90,7 @@ module.exports = async (request, response) => {
         });
 
     } catch (error) {
-        // أي خطأ في التحقق (توكن منتهي، توقيع خاطئ) سيؤدي إلى رفض الوصول
+        console.error("[validate-token] CATCH BLOCK ERROR:", error.message);
         return response.status(401).json({ success: false, error: error.message });
     }
 };
