@@ -1,4 +1,4 @@
-// الملف الجديد: /api/validate-token.js
+// الملف: /api/validate-token.js (النسخة النهائية والمصححة)
 
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -37,7 +37,10 @@ module.exports = async (request, response) => {
         return response.status(405).json({ success: false, error: 'Only POST is allowed' });
     }
 
+    const BIN_ID = '6918dafcd0ea881f40eaa45b';
+    const ACCESS_KEY = '$2a$10$rXrBfSrwkJ60zqKQInt5.eVxCq14dTw9vQX8LXcpnWb7SJ5ZLNoKe';
     const JWT_SECRET = process.env.JWT_SECRET;
+
     if (!JWT_SECRET) {
         return response.status(500).json({ success: false, error: 'Server configuration error.' });
     }
@@ -45,13 +48,32 @@ module.exports = async (request, response) => {
     try {
         const authHeader = request.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return response.status(401).json({ success: false, error: 'Authorization header missing or invalid.' });
+            return response.status(401).json({ success: false, error: 'Authorization header missing.' });
         }
         const token = authHeader.split(' ')[1];
 
+        // 1. التحقق من صحة التوكن (التوقيع وتاريخ الانتهاء)
         const payload = await verifyToken(token, JWT_SECRET);
+        const rin = payload.rin;
+
+        // ✅✅✅ 2. الخطوة الحاسمة: التحقق من الاشتراك في قاعدة البيانات في كل مرة ✅✅✅
+        const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
+            headers: { 'X-Access-Key': ACCESS_KEY }
+        } );
+
+        if (!binResponse.ok) {
+            return response.status(500).json({ success: false, error: 'Failed to fetch subscription data during validation.' });
+        }
+
+        const data = await binResponse.json();
+        const userSubscription = (data.record?.subscriptions || []).find(sub => sub.rin === rin);
+
+        // إذا تم حذف المستخدم أو انتهى اشتراكه من قاعدة البيانات، سيتم رفض التوكن هنا
+        if (!userSubscription || new Date(userSubscription.expiry_date) < new Date()) {
+            return response.status(401).json({ success: false, error: 'Subscription is no longer valid.' });
+        }
         
-        // إذا كان التوكن صالحًا، نرجع بيانات وهمية للنجاح السريع
+        // 3. إذا كان كل شيء سليمًا، نرجع بيانات النجاح
         return response.status(200).json({
             success: true,
             data: {
@@ -61,6 +83,7 @@ module.exports = async (request, response) => {
         });
 
     } catch (error) {
+        // أي خطأ في التحقق (توكن منتهي، توقيع خاطئ) سيؤدي إلى رفض الوصول
         return response.status(401).json({ success: false, error: error.message });
     }
 };
