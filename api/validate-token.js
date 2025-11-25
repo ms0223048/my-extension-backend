@@ -1,4 +1,4 @@
-// الملف: /api/validate-token.js (نسخة التشخيص النهائية)
+// الملف: /api/validate-token.js (النسخة النهائية الكاملة)
 
 const allowCors = (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -31,6 +31,11 @@ module.exports = async (request, response) => {
     console.log("\n--- [validate-token] Received a new request ---");
     allowCors(request, response);
 
+    // ✅ ترويسات منع التخزين المؤقت
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+
     if (request.method === 'OPTIONS') {
         return response.status(200).end();
     }
@@ -43,24 +48,22 @@ module.exports = async (request, response) => {
     const JWT_SECRET = process.env.JWT_SECRET;
 
     if (!JWT_SECRET) {
-        console.error("[validate-token] FATAL ERROR: JWT_SECRET is not set in environment variables.");
+        console.error("[validate-token] FATAL ERROR: JWT_SECRET is not set.");
         return response.status(500).json({ success: false, error: 'Server configuration error.' });
     }
 
     try {
         const authHeader = request.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            console.log("[validate-token] Error: Authorization header missing or invalid.");
+            console.log("[validate-token] Error: Authorization header missing.");
             return response.status(401).json({ success: false, error: 'Authorization header missing.' });
         }
         const token = authHeader.split(' ')[1];
 
-        // 1. التحقق من صحة التوكن (التوقيع وتاريخ الانتهاء)
         const payload = await verifyToken(token, JWT_SECRET);
         const rin = payload.rin;
         console.log(`[validate-token] Token is technically valid for RIN: ${rin}`);
 
-        // 2. التحقق من الاشتراك في قاعدة البيانات في كل مرة
         const binResponse = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
             headers: { 'X-Access-Key': ACCESS_KEY }
         } );
@@ -79,7 +82,6 @@ module.exports = async (request, response) => {
             return response.status(401).json({ success: false, error: 'Subscription is no longer valid.' });
         }
         
-        // 3. إذا كان كل شيء سليمًا، نرجع بيانات النجاح
         console.log(`[validate-token] Subscription for ${rin} is still valid. Granting access.`);
         return response.status(200).json({
             success: true,
